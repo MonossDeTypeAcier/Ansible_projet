@@ -1,0 +1,136 @@
+---
+- name: Initialisation
+  hosts: 127.0.0.1
+  remote_user: root
+
+  tasks:
+  - name: Téléchargement des paquets
+    ansible.builtin.dnf:
+      name:
+        - httpd
+        - dhcp-server
+        - tftp-server
+        - wget
+        - firewalld
+      state: latest
+  
+  tasks:
+  - name: Paramétrage dhcpd.conf
+    ansible.builtin.copy:
+      dest: /etc/dhcp/dhcpd.conf
+      content: | 
+        default-lease-time 600 ;
+        max-lease-time 7200 ;
+        authoritative ;
+
+        subnet 192.168.1.0 netmask 255.255.255.0 {
+        range 192.168.1.110 192.168.1.210 ;
+        option routers 192.168.1.254 ;
+        option domain-name-servers 8.8.8.8, 8.8.4.4;
+        next-server 192.168.1.101;
+        filename "pxelinux.0" ;
+        }
+      owner: root
+      group: root
+      mode: '0644'
+
+    notify: redémarrage service dhcpd
+  - name: Démarrer service dhcp
+    ansible.builtin.service:
+      name: dhcpd
+      state: started
+      enabled: yes
+
+  - name: Création dossier TFTP
+    ansible.builtin.file:
+      path: /var/lib/tftpboot
+      state: directory
+      owner: root
+      group: root
+      mode: '0755'
+
+  - name: Configuration TFTP
+    ansible.builtin.copy:
+      src: "{{item.src}}"
+      dest: "{{item.dest}}" 
+      owner: root
+      group: root
+      mode: '0644'
+    loop:
+      - {src: "/usr/share/syslinux/pxelinux.0", dest: "/var/lib/tftpboot/pxelinux.0"}
+      - {src: "/usr/share/syslinux/ldlinux.c32", dest: "/var/lib/tftpboot/ldlinux.c32"}
+    notify: redémarrage service tftp
+
+  - name: Démarrage service tftp
+    ansible.builtin.service:
+      name: tftp
+      state: started
+      enabled: yes
+
+  - name: Création dossier Http
+    ansible.builtin.file:
+      path: /var/www/html/ubuntu24
+      state: directory
+      owner: root
+      group: root
+      mode: '0755'
+
+  - name: Mount iso    
+    ansible.builtin.mount:
+      path: /mnt/
+      src: /home/user/Documents/ubuntu24.iso
+      fstype: iso9660
+      opts: loop      
+      state: mounted
+
+  - name: Copie des fichiers de l'iso    
+    ansible.builtin.copy:
+      src: /mnt/
+      dest: /var/www/html/ubuntu24/ 
+      owner: root
+      group: root
+      mode: '0644'
+
+  - name: Unmount iso
+    ansible.builtin.mount:
+      path: /mnt/
+      state: unmounted
+
+    
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  handlers:
+    - name: redémarrage service dhcpd
+      ansible.builtin.service:
+        name: dhcpd
+        state: restarted
+    - name: redémarrage service tftp
+      ansible.builtin.service:
+        name: tftp
+        state: restarted
