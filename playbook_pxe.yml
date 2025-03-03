@@ -2,6 +2,7 @@
 - name: Initialisation
   hosts: 127.0.0.1
   remote_user: root
+  become: true
 
   tasks:
   - name: Téléchargement des paquets
@@ -13,6 +14,11 @@
         - wget
         - firewalld
       state: latest
+  - name: Installation util-linux
+    ansible.builtin.package:
+      name: util-linux
+      state: present
+
   
   tasks:
   - name: Paramétrage dhcpd.conf
@@ -67,6 +73,7 @@
       state: started
       enabled: yes
 
+
   - name: Création dossier Http
     ansible.builtin.file:
       path: /var/www/html/ubuntu24
@@ -75,26 +82,34 @@
       group: root
       mode: '0755'
 
-  - name: Mount iso    
-    ansible.builtin.mount:
-      path: /mnt/
-      src: /home/user/Documents/ubuntu24.iso
-      fstype: iso9660
-      opts: loop      
-      state: mounted
+  
+#  - name: Mount iso    
+#    ansible.builtin.mount:
+#      path: /mnt/iso
+#      src: /home/user/Documents/ubuntu24.iso
+#      fstype: iso9660
+#      opts: loop      
+#      state: mounted
 
+  - name: Monter iso
+    ansible.builtin.command:
+      cmd: "mount -o loop /home/user/Documents/ubuntu24.iso /mnt/iso"
+  
   - name: Copie des fichiers de l'iso    
     ansible.builtin.copy:
-      src: /mnt/
+      src: /mnt/iso
       dest: /var/www/html/ubuntu24/ 
       owner: root
       group: root
       mode: '0644'
 
   - name: Unmount iso
-    ansible.builtin.mount:
-      path: /mnt/
-      state: unmounted
+    ansible.builtin.command:
+      cmd: "umount /mnt/iso"
+#  - name: Unmount iso
+#    ansible.builtin.mount:
+#      path: /mnt/iso
+#      state: unmounted
 
     
 

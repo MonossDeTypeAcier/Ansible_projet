@@ -1,0 +1,43 @@
+---
+- name: Monter une ISO et copier les fichiers
+  hosts: 127.0.0.1
+  become: yes  # Utiliser sudo pour les opérations nécessitant des privilèges élevés
+  vars:
+    iso_path: "/home/user/Documents/ubuntu24.iso"  # Remplacez par le chemin de votre ISO
+    mount_point: "/mnt/iso"               # Point de montage temporaire
+    dest_dir: "/var/www/html/ubuntu24/"      # Dossier de destination
+
+  tasks:
+    - name: Vérifier si l'ISO existe
+      ansible.builtin.stat:
+        path: "{{ iso_path }}"
+      register: iso_stat
+
+    - name: Créer le point de montage
+      ansible.builtin.file:
+        path: "{{ mount_point }}"
+        state: directory
+
+    - name: Monter l'ISO
+      ansible.builtin.mount:
+        path: "{{ mount_point }}"
+        src: "{{ iso_path }}"
+        fstype: iso9660
+        opts: loop
+        state: mounted
+      when: iso_stat.stat.exists
+
+    - name: Copier les fichiers de l'ISO vers le dossier Documents
+      ansible.builtin.command:
+        cmd: cp -r {{ mount_point }}/* {{ dest_dir }}/
+      when: iso_stat.stat.exists
+
+    - name: Démonter l'ISO
+      ansible.builtin.mount:
+        path: "{{ mount_point }}"
+        state: unmounted
+
+    - name: Supprimer le point de montage
+      ansible.builtin.file:
+        path: "{{ mount_point }}"
+        state: absent
