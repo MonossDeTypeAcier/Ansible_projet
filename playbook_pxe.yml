@@ -1,53 +1,52 @@
 ---
-- name: Initialisation
+- name: Initialisation du serveur PXE
   hosts: 127.0.0.1
   remote_user: root
   become: true
 
   tasks:
-  - name: Téléchargement des paquets
+  - name: Installation des paquets nécessaires
     ansible.builtin.dnf:
       name:
         - httpd
         - dhcp-server
         - tftp-server
+        - syslinux
         - wget
         - firewalld
+        - ansible
       state: latest
-  - name: Installation util-linux
-    ansible.builtin.package:
-      name: util-linux
-      state: present
 
-  
-  tasks:
-  - name: Paramétrage dhcpd.conf
+  - name: Création de l'utilisateur ansible
+    ansible.builtin.user:
+      name: ansible
+      password: "{{ 'root' | password_hash('sha512') }}"
+      groups: wheel
+      append: yes
+
+  - name: Configuration de DHCP
     ansible.builtin.copy:
       dest: /etc/dhcp/dhcpd.conf
       content: | 
-        default-lease-time 600 ;
-        max-lease-time 7200 ;
-        authoritative ;
-
         subnet 192.168.1.0 netmask 255.255.255.0 {
-        range 192.168.1.110 192.168.1.210 ;
-        option routers 192.168.1.254 ;
-        option domain-name-servers 8.8.8.8, 8.8.4.4;
-        next-server 192.168.1.101;
-        filename "pxelinux.0" ;
+            range 192.168.1.100 192.168.1.200;
+            option routers 192.168.1.254;
+            option domain-name-servers 8.8.8.8, 8.8.4.4;
+            next-server 192.168.1.101;
+            filename "pxelinux.0";
         }
       owner: root
       group: root
       mode: '0644'
+    notify: Restart DHCP
 
-    notify: redémarrage service dhcpd
-  - name: Démarrer service dhcp
+  - name: Démarrer et activer DHCP
     ansible.builtin.service:
       name: dhcpd
       state: started
       enabled: yes
 
-  - name: Création dossier TFTP
+  - name: Configuration du serveur TFTP
     ansible.builtin.file:
       path: /var/lib/tftpboot
       state: directory
@@ -55,26 +54,25 @@
       group: root
       mode: '0755'
 
-  - name: Configuration TFTP
+  - name: Copier les fichiers nécessaires pour PXE
     ansible.builtin.copy:
-      src: "{{item.src}}"
-      dest: "{{item.dest}}" 
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
       owner: root
       group: root
       mode: '0644'
     loop:
-      - {src: "/usr/share/syslinux/pxelinux.0", dest: "/var/lib/tftpboot/pxelinux.0"}
-      - {src: "/usr/share/syslinux/ldlinux.c32", dest: "/var/lib/tftpboot/ldlinux.c32"}
-    notify: redémarrage service tftp
+      - { src: "/usr/share/syslinux/pxelinux.0", dest: "/var/lib/tftpboot/pxelinux.0" }
+      - { src: "/usr/share/syslinux/ldlinux.c32", dest: "/var/lib/tftpboot/ldlinux.c32" }
+    notify: Restart TFTP
 
-  - name: Démarrage service tftp
+  - name: Démarrer et activer TFTP
     ansible.builtin.service:
       name: tftp
       state: started
       enabled: yes
 
-
-  - name: Création dossier Http
+  - name: Configurer le serveur HTTP pour les fichiers d'installation
     ansible.builtin.file:
       path: /var/www/html/ubuntu24
       state: directory
@@ -82,70 +80,93 @@
       group: root
       mode: '0755'
 
-  
-#  - name: Mount iso    
-#    ansible.builtin.mount:
-#      path: /mnt/iso
-#      src: /home/user/Documents/ubuntu24.iso
-#      fstype: iso9660
-#      opts: loop      
-#      state: mounted
+  - name: Monter et copier les fichiers de l'ISO Ubuntu
+    ansible.builtin.shell:
+      cmd: |
+        mount -o loop /home/user/Documents/ubuntu24.iso /mnt/iso
+        cp -r /mnt/iso/* /var/www/html/ubuntu24/
+        umount /mnt/iso
+    args:
+      executable: /bin/bash
 
-  - name: Monter iso
-    ansible.builtin.command:
-      cmd: "mount -o loop /home/user/Documents/ubuntu24.iso /mnt/iso"
-  
-  - name: Copie des fichiers de l'iso    
+  - name: Configurer PXE
+    ansible.builtin.file:
+      path: /var/lib/tftpboot/pxelinux.cfg
+      state: directory
+
+  - name: Créer le fichier de configuration PXE
     ansible.builtin.copy:
-      src: /mnt/iso
-      dest: /var/www/html/ubuntu24/ 
+      dest: /var/lib/tftpboot/pxelinux.cfg/default
+      content: |
+        DEFAULT ubuntu
+        LABEL ubuntu
+            KERNEL ubuntu24/vmlinuz
+            APPEND initrd=ubuntu24/initrd.gz auto=true priority=critical ks=http://192.168.1.101/ks.cfg
       owner: root
       group: root
       mode: '0644'
 
-  - name: Unmount iso
-    ansible.builtin.command:
-      cmd: "umount /mnt/iso"
-#  - name: Unmount iso
-#    ansible.builtin.mount:
-#      path: /mnt/iso
-#      state: unmounted
+  - name: Copier les fichiers du noyau Ubuntu pour PXE
+    ansible.builtin.copy:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      owner: root
+      group: root
+      mode: '0644'
+    loop:
+      - { src: "/var/www/html/ubuntu24/casper/vmlinuz", dest: "/var/lib/tftpboot/ubuntu24/vmlinuz" }
+      - { src: "/var/www/html/ubuntu24/casper/initrd", dest: "/var/lib/tftpboot/ubuntu24/initrd.gz" }
 
-    
+  - name: Créer le fichier Kickstart
+    ansible.builtin.copy:
+      dest: /var/www/html/ks.cfg
+      content: |
+        install
+        url --url http://192.168.1.101/ubuntu24
+        lang en_US.UTF-8
+        keyboard fr
+        timezone Europe/New_York
+        rootpw --iscrypted $6$rounds=8000$RANDOM_SALT$HASHED_PASSWORD
+        bootloader --location=mbr --boot-drive=sda
+        clearpart --all --initlabel
+        part /boot --fstype=ext4 --size=500
+        part swap --size=2048
+        part / --fstype=ext4 --size=10240
+        %packages
+        @core
+        %end
+      owner: root
+      group: root
+      mode: '0644'
 
+  - name: Ouvrir les ports nécessaires dans le pare-feu
+    ansible.builtin.firewalld:
+      service: "{{ item }}"
+      permanent: yes
+      state: enabled
+    loop:
+      - dhcp
+      - tftp
+      - http
 
+  - name: Redémarrer le pare-feu
+    ansible.builtin.service:
+      name: firewalld
+      state: restarted
 
- 
+  - name: Vérifier les services
+    ansible.builtin.shell:
+      cmd: |
+        systemctl is-active dhcpd && systemctl is-active tftp && systemctl is-active httpd
+    register: service_status
+    failed_when: service_status.rc != 0
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
   handlers:
-    - name: redémarrage service dhcpd
+    - name: Restart DHCP
       ansible.builtin.service:
         name: dhcpd
         state: restarted
-    - name: redémarrage service tftp
+    - name: Restart TFTP
       ansible.builtin.service:
         name: tftp
         state: restarted
